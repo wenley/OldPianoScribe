@@ -72,7 +72,7 @@
    if (fieldEnum == CPTScatterPlotFieldX) {
       if ([plot.identifier isEqual:@"Fourier"])
 //         return nil;
-         return [NSNumber numberWithDouble:val * 2];
+         return [NSNumber numberWithDouble:val * 4];
       else
          return [NSNumber numberWithDouble:val];
    }

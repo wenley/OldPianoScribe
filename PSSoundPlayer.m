@@ -64,6 +64,11 @@
       
       //  Mark as no recording made 
       secondsRecorded = 0.0;
+      
+//      NSString * pathToNoteWaves = [[NSBundle mainBundle] pathForResource:@"data008" ofType:nil];
+//      NSArray * fileList = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:pathToNoteWaves error:nil];
+//      NSLog(@"Files at path %@: %d", pathToNoteWaves, fileList.count);
+//      database = [[PSNoteDatabase alloc] initFromDirectory:pathToNoteWaves];
    }
    return self;
 }
@@ -109,34 +114,45 @@
       UInt64 length = 0, offset;
       
       //  Store data from file
-//      NSString * pathToDataFile = [[NSBundle mainBundle] pathForResource:@"humData" ofType:@"txt"];
-//      NSString * contents = [NSString stringWithContentsOfFile:pathToDataFile encoding:NSASCIIStringEncoding error:NULL];
-//      NSArray * lines = [contents componentsSeparatedByString:@"\n"];
-//      AudioSampleType * data = calloc(lines.count, sizeof(AudioSampleType));
-//      for (int i = 0; i < lines.count; i++) {
-//         NSString * line = [lines objectAtIndex:i];
-//         data[i] = [line intValue];
-//      }
-//      length = lines.count;
-//      offset = 0;
+      NSString * pathToDataFile = [[NSBundle mainBundle] pathForResource:@"data008/C4" ofType:nil];
+      NSString * contents = [NSString stringWithContentsOfFile:pathToDataFile encoding:NSASCIIStringEncoding error:NULL];
+      NSArray * lines = [contents componentsSeparatedByString:@"\n"];
+      AudioSampleType * data = calloc(lines.count, sizeof(AudioSampleType));
+      for (int i = 0; i < lines.count; i++) {
+         NSString * line = [lines objectAtIndex:i];
+         data[i] = [line intValue];
+      }
+      length = lines.count;
+      offset = 0;
 
       //  Get data from sound recording
-      AudioSampleType * data = [self getSoundDataWithLength:&length];
-      offset = 32;
-      NSLog(@"data is null? %d", data == NULL);
+//      AudioSampleType * data = [self getSoundDataWithLength:&length];
+//      offset = 32;
+//      NSLog(@"data is null? %d", data == NULL);
 
       NSMutableArray * temp = [NSMutableArray array];
-      for (int i = 0 + offset; i < 4096 + offset; i++) {
+      for (int i = 0 + offset; i < 2048 + offset; i++) {
          [temp addObject:[NSNumber numberWithDouble:data[i]/32768.0]]; //  Convert to double!!!
 //         NSLog(@"%d --> %@", data[i], [temp objectAtIndex:i]);
-         printf("%d\n", data[i]);
+//         printf("%d\n", data[i]);
       }
       
       //  Temporary to show graph
-//      self.soundData = temp;
-//      self.fourierData = [PSFourierWorker initTransformToFrequency:self.soundData];
+      self.soundData = temp;
+      self.fourierData = [PSFourierWorker initTransformToFrequency:self.soundData];
       
 //      [self processRecordingWithData:data ofLength:length];
+      NSString * tinyDir = [[NSBundle mainBundle] pathForResource:@"tiny" ofType:nil];
+      NSString * tinyTestDir = [[NSBundle mainBundle] pathForResource:@"testtiny" ofType:nil];
+      PSNoteDatabase * db = [[PSNoteDatabase alloc] initFromDirectory:tinyDir];
+      NSString * signalContents = [NSString stringWithContentsOfFile:[tinyTestDir stringByAppendingPathComponent:@"test1"]
+                                                       encoding:NSASCIIStringEncoding error:nil];
+      NSArray * vals = [[signalContents componentsSeparatedByString:@"\n"] subarrayWithRange:NSMakeRange(0, WINDOW_SIZE)];
+      NSMutableArray * sig = [NSMutableArray arrayWithCapacity:vals.count];
+      for (NSString * v in vals)
+         [sig addObject:[NSNumber numberWithDouble:v.doubleValue / 32768.0]];
+      [db bestHypothesisForSignal:[sig subarrayWithRange:NSMakeRange(0, WINDOW_SIZE)]];
+      
 //      NSLog(@"Fourier data has length: %d", [self.fourierData count]);
    }
    return elapsed;
@@ -205,19 +221,11 @@ double * zeroPhaseIIRFilter(double * data, UInt64 length)
 //   }
    
    double * filter1 = IIRFilter(data, length);
-   for (int i = 0; i < 20; i++)
-      NSLog(@"After first filter: %d --> %f", i, filter1[i]);
    reverse(filter1, length);
-   for (int i = 0; i < 20; i++)
-      NSLog(@"After first reverse: %d --> %f", i, filter1[i]);
    double * filter2 = IIRFilter(filter1, length);
-   for (int i = 0; i < 20; i++)
-      NSLog(@"After second filter: %d --> %f", i, filter1[i]);
    reverse(filter2, length);
-   for (int i = 0; i < 20; i++)
-      NSLog(@"After first reverse: %d --> %f", i, filter1[i]);
 
-   
+   free(filter1);
    return filter2;
 }
 
@@ -265,13 +273,6 @@ CFComparisonResult comparePeaks(const void * p1, const void * p2, void * info)
    NSLog(@"Would process data with length %llu", length);
    if (data == nil || data == NULL)
       NSLog(@"...but data is nil?");
-   else {
-      size_t i = 0;
-      while (data[i] == 0 && i < length)
-         i++;
-      NSLog(@"First couple bytes: %u %u %u", data[0], data[1], data[2]);
-      NSLog(@"First non-zero byte at index %lu, value %u", i, data[i]);
-   }
    free(data);
    
    NSAssert(self.fourierData != NULL, @"fourier data is null!");
@@ -330,20 +331,30 @@ CFComparisonResult comparePeaks(const void * p1, const void * p2, void * info)
       for (int j = 1; j <= Z; j++) {
          int index = maxPeaks[i]->index / j;
          double freq = freqPerBin * index;
-         [innerTemp insertObject:[[PSNoteHypothesis alloc] initWithFrequency:freq atIndex:index ofArray:filteredData]
-                         atIndex:j-1];
+         [innerTemp addObject:[[PSNoteHypothesis alloc] initWithFrequency:freq atIndex:index ofArray:filteredData]];
       }
-      [temp insertObject:innerTemp.copy atIndex:P-1-i];
+      [temp addObject:innerTemp.copy];
       free(maxPeaks[i]);
    }
    NSArray * hypotheses = temp;
    for (NSArray * x in hypotheses) {
       for (PSNoteHypothesis * n in x) {
          [n findComb:Mmax];
-         if ([n hasMinimumSupport:2 andEnergy:10.0])
+         if ([n hasMinimumSupport:3 andEnergy:500.0])
             NSLog(@"Kept %@", n);
       }
    }
+   
+   //  Test code for NoteDatabase
+//   [database bestHypothesisForSignal:self.soundData];
+   NSString * tinyDir = [[NSBundle mainBundle] pathForResource:@"tiny" ofType:nil];
+   NSString * tinyTestDir = [[NSBundle mainBundle] pathForResource:@"tinytest" ofType:nil];
+   PSNoteDatabase * db = [[PSNoteDatabase alloc] initFromDirectory:tinyDir];
+   NSArray * sig = [[NSString stringWithContentsOfFile:[tinyTestDir stringByAppendingPathComponent:@"test1"]
+                                              encoding:NSASCIIStringEncoding error:nil]
+                    componentsSeparatedByString:@"\n"];
+   [db bestHypothesisForSignal:sig];
+   
    
    //  Phase Vocoder relevant when processing whole stream with windows
    //  Hanning Windows to minimize window effects

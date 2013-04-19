@@ -9,8 +9,8 @@
 #import <Foundation/Foundation.h>
 #import <Accelerate/Accelerate.h>
 
-enum { NUM_NOTES = 88 };
-enum { WINDOW_SIZE = 1024 };
+enum { NUM_NOTES = 5 };
+enum { WINDOW_SIZE = 60 };
 
 @interface PSNoteDatabase : NSObject
 {

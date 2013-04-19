@@ -8,6 +8,9 @@
 
 #import "PSNoteDatabase.h"
 
+#import <mach/mach.h>
+#import <mach/mach_host.h>
+
 @interface PSNoteDatabase()
 
 - (NSArray *) alignDatabaseToSignal:(NSArray *) signal;
@@ -22,32 +25,57 @@
 {
    self = [super init];
    if (self) {
+      NSLog(@"Initializing from directory %@", noteDirectory);
       NSMutableArray * temp = [[NSMutableArray alloc] initWithCapacity:88];
+      BOOL * inserted = calloc(NUM_NOTES, sizeof(BOOL));
+      for (int i = 0; i < NUM_NOTES; i++)
+         [temp addObject:[NSArray array]];
       NSArray * directory = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:noteDirectory error:NULL];
       if (directory.count == 0)
          NSLog(@"Empty directory? %@", noteDirectory);
-      for (int i = 0; i < directory.count; i++) {
-         NSLog(@"Object type is %@", [[directory objectAtIndex:i] class]);
-         NSString * contents = [NSString stringWithContentsOfFile:[directory objectAtIndex:i] encoding:NSASCIIStringEncoding error:NULL];
-         NSArray * lines = [contents componentsSeparatedByString:@"\n"];
-         int index = ((NSString *) [lines objectAtIndex:0]).intValue;
-         if (index < 0 || index >= NUM_NOTES) {
-            NSLog(@"Bad note index: %@", [directory objectAtIndex:i]);
+      for (NSString * fileName in directory) {
+         if ([fileName isEqualToString:@"test1"]) {
+            NSLog(@"Still dealing with ghostly test1...");
             continue;
          }
-         if (lines.count - 1 != WINDOW_SIZE) {
-            NSLog(@"Bad window size: %@", [directory objectAtIndex:i]);
+
+         NSString * contents = [NSString stringWithContentsOfFile:[noteDirectory stringByAppendingPathComponent:fileName] encoding:NSASCIIStringEncoding error:NULL];
+         NSArray * lines = [[contents componentsSeparatedByString:@"\n"] subarrayWithRange:NSMakeRange(0, WINDOW_SIZE + 1)];
+         NSLog(@"Processing file %@, has %d lines", fileName, lines.count);
+         int index = ((NSString *) [lines objectAtIndex:0]).intValue;
+         if (index < 0 || index >= NUM_NOTES) {
+            NSLog(@"Bad note index: %@", fileName);
+            continue;
+         }
+         if (inserted[index]) {
+            NSLog(@"Duplicate notes? index %d, file name is %@", index, fileName);
+            NSLog(@"Has %d lines", lines.count);
+            for (int i = 0; i < 10 && i < lines.count; i++)
+               NSLog(@"%@", [lines objectAtIndex:i]);
+
+//            NSLog(@"Existing object: %@", [temp objectAtIndex:index]);
+            continue;
+         }
+         if (lines.count - 1 < WINDOW_SIZE) {
+            NSLog(@"Bad window size: %@", fileName);
             continue;
          }
          NSMutableArray * window = [NSMutableArray arrayWithCapacity:WINDOW_SIZE];
-         for (int i = 1; i < lines.count; i++) {
+         for (int i = 1; i < lines.count && i - 1 < WINDOW_SIZE; i++) {
             int value = ((NSString *) [lines objectAtIndex:i]).intValue;
-            [window insertObject:[NSNumber numberWithInt:value] atIndex:i-1];
+            [window addObject:[NSNumber numberWithDouble:value/32768.0]];
          }
-         [temp insertObject:window atIndex:index];
+         [temp replaceObjectAtIndex:index withObject:window];
+         inserted[index] = YES;
+//         NSLog(@"Inserted window of length %d into temp at index %d", window.count, index);
       }
       notes = temp;
    }
+   NSLog(@"%@", [[notes objectAtIndex:0] subarrayWithRange:NSMakeRange(0, 10)]);
+   NSLog(@"%@", [[notes objectAtIndex:1] subarrayWithRange:NSMakeRange(0, 10)]);
+   NSLog(@"%@", [[notes objectAtIndex:2] subarrayWithRange:NSMakeRange(0, 10)]);
+   NSLog(@"%@", [[notes objectAtIndex:3] subarrayWithRange:NSMakeRange(0, 10)]);
+   NSLog(@"%@", [[notes objectAtIndex:4] subarrayWithRange:NSMakeRange(0, 10)]);
    return self;
 }
 
@@ -55,18 +83,21 @@
 {
    NSMutableArray * alignedNotes = [NSMutableArray arrayWithCapacity:notes.count];
    for (int i = 0; i < notes.count; i++) {
-      NSArray * note = [notes objectAtIndex:i];
+      id thing = [notes objectAtIndex:i];
+//      NSLog(@"Object at notes[%d] is of class %@", i, [thing class]);
+      NSArray * note = (NSArray *) thing;
       if (signal.count != note.count) {
          NSLog(@"Mismatch in signal lengths: signal %d, while database %d", signal.count, note.count);
          return nil;
       }
       int maxt = [self maxConvolutionOfSignal:signal withSignal:note];
+      NSLog(@"Max alignment for row %d is %d", i, maxt);
       NSMutableArray * alignedNote = [NSMutableArray arrayWithCapacity:note.count];
       for (int n = 0; n < note.count; n++) {
          int index = (n - maxt + note.count) % note.count;
-         [alignedNote insertObject:[note objectAtIndex:index] atIndex:n];
+         [alignedNote addObject:[note objectAtIndex:index]];
       }
-      [alignedNotes insertObject:alignedNote atIndex:i];
+      [alignedNotes addObject:alignedNote];
    }
    return alignedNotes;
 }
@@ -74,19 +105,50 @@
 - (NSArray *) bestHypothesisForSignal:(NSArray *) signal;
 {
    NSArray * alignedNotes = [self alignDatabaseToSignal:signal];
+   if (alignedNotes == nil) {
+      NSLog(@"Couldn't align notes?");
+      return nil;
+   }
+//   for (int i = 0; i < alignedNotes.count; i++) {
+//      NSArray * row = [alignedNotes objectAtIndex:i];
+//      NSLog(@"Fifth column, row %d: %@", i, [row objectAtIndex:5]);
+//   }
    
    //  Make D, D^T, s
    int rows, columns;
    double * D = [self maxtrixFromArray:alignedNotes withDimensions:&rows by:&columns];
+   if (D == NULL)
+      return nil;
    double * DT = calloc(rows * columns, sizeof(double));
    vDSP_mtransD(D, 1, DT, 1, columns, rows);
    double * sig = calloc(signal.count, sizeof(double));
    int i = 0;
    for (NSNumber * value in signal)
       sig[i++] = value.doubleValue;
+   NSLog(@"First 5x10 quadrant of D:");
+   for (int i = 0; i < 5; i++) {
+      for (int j = 0; j < 10; j++)
+         printf("%5.4f ", D[i*columns + j]);
+      printf("\n");
+   }
+   NSLog(@"First 10x5 quadrant of D^T:");
+   for (int i = 0; i < 10; i++) {
+      for (int j = 0; j < 5; j++)
+         printf("%5.4f ", DT[i*rows + j]);
+      printf("\n");
+   }
+
+   
    
    double * temp = calloc(rows * rows, sizeof(double));
    vDSP_mmulD(D, 1, DT, 1, temp, 1, rows, rows, columns);
+   NSLog(@"First 5x5 quadrant of DD^T:");
+   for (int i = 0; i < 5; i++) {
+      for (int j = 0; j < 5; j++)
+         printf("%5.4f ", temp[i*rows + j]);
+      printf("\n");
+   }
+
    double * inv = calloc(rows * rows, sizeof(double));
    [self computeInverseOf:temp withRows:rows andColumns:rows into:inv];
    double * transform = calloc(rows * columns, sizeof(double));
@@ -94,6 +156,8 @@
    
    double * alpha = calloc(rows, sizeof(double));
    vDSP_mmulD(transform, 1, sig, 1, alpha, 1, rows, 1, columns);
+   for (int i = 0; i < rows; i++)
+      NSLog(@"alpha[%d] = %f", i, alpha[i]);
    
    return nil;
 }
@@ -143,18 +207,30 @@
       result2D[i][i] = 1.0;
    }
    
+   NSLog(@"First 5x5 quadrant of copied matrix:");
+   for (int i = 0; i < 5; i++) {
+      for (int j = 0; j < 5; j++)
+         printf("%5.4f", matrix[i][j]);
+      printf("\n");
+   }
+   
    //  Gauss-Jordan Elimination
    //  From pseudo-code on Wikipedia
-   for (int k = 0; k < rows; k++) {
+   for (int k = 0; k < cols; k++) {
       //  Find pivot row
       int i_max = k;
       for (int i = k + 1; i < rows; i++)
          if (fabs(matrix[i][k]) > fabs(matrix[i_max][k]))
             i_max = i;
-      if (matrix[i_max][k] == 0.0)
-         NSLog(@"Failed; can't find inverse");
+      if (matrix[i_max][k] == 0.0) {
+         NSLog(@"Failed; can't find inverse on column %d", k);
+         for (int i = 0; i < 5; i++)
+            printf("%f, %f\n", matrix[i][k-1], matrix[i][k]);
+         return;
+      }
       //  Swap if necessary
       if (i_max != k) {
+         NSLog(@"Swapping row %d up to %d", i_max, k);
          double * temp = matrix[i_max];
          matrix[i_max] = matrix[k];
          matrix[k] = temp;
@@ -174,6 +250,20 @@
       }
    }
 
+   //  Convert Row-Echelon form to Identity
+   //  For each column moving backwards...
+   for (int j = cols - 1; j >= 0; j--) {
+      //  Normalize according to this row
+      NSLog(@"Dividing row %d by factor %f", j, matrix[j][j]);
+      for (int k = 0; k < cols; k++)
+         result2D[j][k] /= matrix[j][j];
+      //  Subtract from previous rows
+      for (int i = j - 1; i >= 0; i--) {
+         for (int k = 0; k < cols; k++)
+            result2D[i][k] -= result2D[j][k] * matrix[i][j];
+      }
+   }
+   
    //  Clean up and write down results
    for (int i = 0; i < rows; i++)
       free(matrix[i]);
@@ -190,12 +280,15 @@
 {
    *rows = array.count;
    *columns = -1;
-   double * matrix = calloc(*rows * *columns, sizeof(double));
+   double * matrix;
 
    for (int i = 0; i < array.count; i++) {
       NSArray * row = [array objectAtIndex:i];
-      if (*columns == -1)
+      if (*columns == -1) {
          *columns = row.count;
+         NSLog(@"Set columns to %d", *columns);
+         matrix = calloc(*rows * *columns, sizeof(double));
+      }
       else if (row.count != *columns) {
          NSLog(@"Rows not of same length! Row %d is of length %d, vs. %d", i, row.count, *columns);
          free(matrix);
@@ -205,7 +298,7 @@
       }
       for (int j = 0; j < row.count; j++) {
          NSNumber * value = [row objectAtIndex:j];
-         matrix[i*array.count + j] = value.doubleValue;
+         matrix[i*row.count + j] = value.doubleValue;
       }
    }
    return matrix;

@@ -13,6 +13,7 @@
 #import <AudioToolbox/ExtendedAudioFile.h>
 #import <CoreAudio/CoreAudioTypes.h>
 #import "PSFourierWorker.h"
+#import "PSNoteDatabase.h"
 
 @class PSFirstViewController;
 
@@ -29,6 +30,8 @@
    
    @private NSArray * soundData;
    @private NSArray * fourierData;
+   
+   @private PSNoteDatabase * database;
 }
 
 @property AVAudioSession * session;
